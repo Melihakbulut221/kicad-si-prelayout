@@ -144,6 +144,6 @@ with st.expander("Topology YAML (effective)"):
     st.code(yaml.safe_dump(project.model_dump(mode="json"), sort_keys=False), language="yaml")
 
 st.info(
-    "MVP engine: lossless TL (method of characteristics) + behavioral driver. "
-    "Full IBIS IV/VT, lossy VF lines, and coupled crosstalk are on the roadmap."
+    "Engine: MoC transmission lines (± loss attenuation) + PWL or IBIS 2-EQ/2-WF drivers. "
+    "Try `ibis_series_terminated.si.yml`. Full VF macromodels and coupled MoM are on the roadmap."
 )

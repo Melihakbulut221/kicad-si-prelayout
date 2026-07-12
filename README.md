@@ -4,15 +4,13 @@
 building driver → transmission-line → termination topologies, simulating
 reflections in the time domain, and reviewing SI checks.
 
-> Status: **v0.1 alpha**. Lossless TL + behavioral driver MVP.
-> Full IBIS IV/VT, lossy/causal lines, crosstalk, and KiCad IPC come next.
+> Status: **v0.2 alpha** — IBIS 2-EQ/2-WF drivers, lossy-line approx, what-if sweeps.
 
 ## Why
 
 Commercial SI (HyperLynx, Sigrity, …) is expensive. Open-source has solvers
 (openEMS, scikit-rf, atlc, ngspice) but not an integrated “draw a topology,
-get a waveform” experience. This project starts at the highest-leverage
-entry point: **pre-layout SI**.
+get a waveform” experience. This project starts at **pre-layout SI**.
 
 ## Quick start
 
@@ -21,43 +19,54 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[ui,dev]"
 
-# CLI
-si-prelayout analyze examples/series_terminated.si.yml --plot /tmp/si.png -r /tmp/si.md
+# Behavioral driver demo
+si-prelayout analyze examples/series_terminated.si.yml --plot /tmp/si.png
+
+# IBIS-driven demo (synthetic model)
+si-prelayout analyze examples/ibis_series_terminated.si.yml -r /tmp/si.md
+
+# What-if sweep
+si-prelayout sweep examples/series_terminated.si.yml --series-r 10,22,33,47
 
 # Friendly web UI
 si-prelayout ui
 ```
 
-Or: `streamlit run ui/app.py`
-
 ## What you get
 
-- **YAML topology** projects (CI-friendly, reviewable)
+- **YAML topology** projects (CI-friendly)
 - **Python API** (`load_project`, `run_simulation`)
-- **CLI** with Rich tables + waveform plots
-- **Streamlit Studio** — sliders for Rs / length / Z0 / edge, live waveforms
-- **SI checks** — overshoot, undershoot, monotonicity (MVP)
+- **CLI** with Rich tables, plots, and sweeps
+- **Streamlit Studio** — Rs / length / Z0 / edge knobs
+- **IBIS** subset parser + 2-EQ/2-WF switching coefficients
+- **Lossy TL** first-order attenuation (skin + Djordjevic–Sarkar helpers)
+- **SI checks** — overshoot, undershoot, monotonicity
 
-## Example topology
+## Examples
 
-See [`examples/series_terminated.si.yml`](examples/series_terminated.si.yml).
+| File | Description |
+|------|-------------|
+| `examples/series_terminated.si.yml` | PWL driver + series R + open-ish RX |
+| `examples/parallel_terminated.si.yml` | Matched far-end |
+| `examples/ibis_series_terminated.si.yml` | IBIS GENERIC_OUTPUT + lossy TL |
+| `examples/buffers/generic_25ohm.ibs` | Synthetic self-consistent IBIS |
 
-## Architecture (short)
+## Architecture
 
 1. Topology domain (Pydantic) ← YAML  
-2. 2D closed-form Z0 (preview) → RLGC/MoM later  
-3. Lossless TL via method of characteristics  
-4. Small nodal transient solver  
-5. Analysis / report / UI  
+2. IBIS IV/VT → Ku/Kd (2-EQ/2-WF)  
+3. MoC TL (± loss attenuation)  
+4. Nodal transient (Newton for IBIS)  
+5. Checks / sweeps / UI  
 
 Details: [`docs/models.md`](docs/models.md)
 
 ## Roadmap
 
-1. Full IBIS parser + 2-EQ/2-WF buffers  
-2. Lossy lines (skin + Djordjevic–Sarkar) + vector fitting  
+1. ~~IBIS parser + 2-EQ/2-WF~~  
+2. Vector fitting lossy macromodels  
 3. Coupled lines / crosstalk  
-4. Corner & what-if sweeps + richer reports  
+4. Richer corner reports + eye metrics  
 5. KiCad 9+ IPC plugin  
 
 ## License

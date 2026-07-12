@@ -1,0 +1,68 @@
+name: ibis_series_terminated
+description: >
+  Same reflection demo as series_terminated, but the driver uses the
+  synthetic GENERIC_OUTPUT IBIS model (2-EQ/2-WF Ku/Kd).
+
+stackup:
+  materials:
+    FR4:
+      name: FR4
+      er: 4.2
+      tand: 0.02
+  layers: []
+
+traces:
+  microstrip_50:
+    name: microstrip_50
+    style: microstrip
+    z0_ohm: 50.0
+    velocity_factor: 0.66
+    lossy: true
+    r_dc_per_m: 8.0
+    tand: 0.02
+
+ibis_files:
+  generic:
+    path: buffers/generic_25ohm.ibs
+    model: GENERIC_OUTPUT
+    corner: typ
+
+topology:
+  - id: U1
+    type: ibis_driver
+    model: GENERIC_OUTPUT
+    ibis: generic
+    corner: typ
+    v_high: 3.3
+    v_low: 0.0
+    r_series_ohm: 10.0
+    edge_s: 2.0e-10
+    delay_s: 1.0e-9
+    pulse_width_s: 6.0e-9
+
+  - id: Rseries
+    type: resistor
+    ohms: 33.0
+    to: floating
+
+  - id: T1
+    type: tline
+    ref: microstrip_50
+    length_m: 0.08
+
+  - id: U2
+    type: ibis_receiver
+    model: GENERIC_INPUT
+    c_comp_f: 3.0e-12
+    r_die_ohm: 1.0e6
+
+nets:
+  - connect: [U1.out, Rseries.a]
+  - connect: [Rseries.b, T1.a]
+  - connect: [T1.b, U2.in]
+
+analyze:
+  tstop_s: 2.0e-8
+  dt_s: 5.0e-12
+  probes: [U1.out, U2.in]
+  checks: [overshoot, undershoot, monotonicity]

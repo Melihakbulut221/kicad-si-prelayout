@@ -48,6 +48,10 @@ class TraceRef(BaseModel):
         lt=1.0,
         description="v / c0 for lossless delay; used when z0 is given directly",
     )
+    lossy: bool = False
+    r_dc_per_m: float = Field(5.0, ge=0.0)
+    r_skin: float = Field(5e-5, ge=0.0, description="Ohm/m/√Hz skin term")
+    tand: float = Field(0.02, ge=0.0)
 
 
 class IbisRef(BaseModel):

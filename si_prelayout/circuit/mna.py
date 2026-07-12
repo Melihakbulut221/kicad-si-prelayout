@@ -1,8 +1,9 @@
-"""Nodal transient solver with lossless TL (MoC) companions."""
+"""Nodal transient solver: MoC TLs + behavioral/IBIS drivers."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
@@ -16,6 +17,9 @@ from si_prelayout.domain.topology import (
     Tline,
 )
 from si_prelayout.field2d.closed_form import resolve_trace
+from si_prelayout.field2d.loss_models import attenuation_neper_per_m
+from si_prelayout.ibis.buffer import IbisBufferState, build_buffer
+from si_prelayout.ibis.parser import parse_ibis
 from si_prelayout.tline.lossless import LosslessLine, delay_seconds
 
 
@@ -26,13 +30,18 @@ class _CapState:
     v_prev: float = 0.0
 
 
+@dataclass
+class _LineState:
+    line: LosslessLine
+    atten: float  # e^(-αℓ) applied to traveling waves
+    r_series: float  # total series loss resistance
+
+
 def _driver_voltage(drv: IbisDriver, t: float) -> float:
-    """Piecewise-linear pulse (MVP stand-in until full IBIS IV/VT)."""
     t0 = drv.delay_s
     tr = max(drv.edge_s, 1e-15)
     vh, vl = drv.v_high, drv.v_low
     pw = drv.pulse_width_s
-
     if t < t0:
         return vl
     if t < t0 + tr:
@@ -47,21 +56,32 @@ def _driver_voltage(drv: IbisDriver, t: float) -> float:
 
 
 class TransientSimulator:
-    """Build a nodal netlist from Project and run a fixed-step transient."""
+    """Fixed-step nodal transient with lossless/attenuated MoC lines."""
 
     def __init__(self, project: Project):
         self.project = project
         self.components = {c.id: c for c in project.topology}
-        self.node_of: dict[str, int] = {}  # pin -> node index (0 = gnd)
-        self._lines: dict[str, LosslessLine] = {}
+        self.node_of: dict[str, int] = {}
+        self._lines: dict[str, _LineState] = {}
         self._caps: list[_CapState] = []
+        self._ibis_bufs: dict[str, IbisBufferState] = {}
+        self._ibis_cache: dict[str, object] = {}
         self._build_nodes()
+        self._load_ibis_buffers()
+        self._tie_unused_die_nodes()
 
-    def _pin(self, name: str) -> str:
-        return name.strip()
+    def _tie_unused_die_nodes(self) -> None:
+        """Short .die to .out when no IBIS IV model (PWL drivers)."""
+        for c in self.project.topology:
+            if not isinstance(c, IbisDriver):
+                continue
+            if c.id in self._ibis_bufs and self._ibis_bufs[c.id].uses_iv_table():
+                continue
+            # Rebuild mapping: force same node by reassigning
+            nout = self.node_of[f"{c.id}.out"]
+            self.node_of[f"{c.id}.die"] = nout
 
     def _build_nodes(self) -> None:
-        # Union-find style: each pin starts alone; nets merge; gnd is 0
         parent: dict[str, str] = {}
 
         def find(x: str) -> str:
@@ -75,17 +95,18 @@ class TransientSimulator:
             ra, rb = find(a), find(b)
             if ra == rb:
                 return
-            if ra == "gnd" or ra.endswith("#gnd"):
+            if ra == "gnd":
                 parent[rb] = ra
-            elif rb == "gnd" or rb.endswith("#gnd"):
+            elif rb == "gnd":
                 parent[ra] = rb
             else:
                 parent[rb] = ra
 
-        # Ensure component pins exist
         for c in self.project.topology:
             if isinstance(c, IbisDriver):
                 parent.setdefault(f"{c.id}.out", f"{c.id}.out")
+                # Die node stays separate (package/series R to .out)
+                parent.setdefault(f"{c.id}.die", f"{c.id}.die")
             elif isinstance(c, IbisReceiver):
                 parent.setdefault(f"{c.id}.in", f"{c.id}.in")
             elif isinstance(c, Tline):
@@ -102,21 +123,61 @@ class TransientSimulator:
                 union(f"{c.id}.b", "gnd")
 
         parent.setdefault("gnd", "gnd")
-
         for net in self.project.nets:
-            pins = [self._pin(p) for p in net.connect]
+            pins = [p.strip() for p in net.connect]
             for p in pins[1:]:
                 union(pins[0], p)
 
-        # Assign integer node ids
+        # If a driver has no IBIS IV model, short die to out
+        # (done after load — for now always keep die; PWL stamps on out)
         roots = sorted({find(p) for p in parent if find(p) != "gnd"})
-        index = {r: i + 1 for i, r in enumerate(roots)}  # 1..n, 0=gnd
+        index = {r: i + 1 for i, r in enumerate(roots)}
         index["gnd"] = 0
-
-        for pin in list(parent.keys()):
+        for pin in parent:
             self.node_of[pin] = index[find(pin)]
+        self.n = len(roots)
 
-        self.n = len(roots)  # number of non-ground nodes
+    def _load_ibis_buffers(self) -> None:
+        for c in self.project.topology:
+            if not isinstance(c, IbisDriver):
+                continue
+            path = None
+            if c.ibis and c.ibis in self.project.ibis_files:
+                path = self.project.ibis_files[c.ibis].path
+            elif c.ibis:
+                path = c.ibis
+            if not path:
+                continue
+            p = Path(path)
+            if not p.is_file():
+                # resolve relative to CWD / examples
+                for base in (Path.cwd(), Path(__file__).resolve().parents[2]):
+                    cand = base / path
+                    if cand.is_file():
+                        p = cand
+                        break
+            if not p.is_file():
+                continue
+            ibis = parse_ibis(p)
+            model_name = c.model
+            if model_name not in ibis.models:
+                # try project ibis_files model override
+                ref = self.project.ibis_files.get(c.ibis or "")
+                if ref:
+                    model_name = ref.model
+            if model_name not in ibis.models:
+                continue
+            model = ibis.get(model_name)
+            self._ibis_bufs[c.id] = build_buffer(
+                model,
+                corner=c.corner,
+                delay_s=c.delay_s,
+                pulse_width_s=c.pulse_width_s,
+                v_high=c.v_high,
+                v_low=c.v_low,
+                r_series_ohm=c.r_series_ohm,
+                edge_s=c.edge_s,
+            )
 
     def run(self) -> SimulationResult:
         p = self.project
@@ -125,125 +186,188 @@ class TransientSimulator:
         nsteps = int(np.floor(tstop / dt)) + 1
         t = np.arange(nsteps) * dt
 
-        # Prepare TL companions
+        # Default edge for loss estimate
+        edge = 0.2e-9
         for c in p.topology:
-            if isinstance(c, Tline):
-                z0, dly_m = resolve_trace(p.traces[c.ref])
-                td = delay_seconds(c.length_m, dly_m)
-                self._lines[c.id] = LosslessLine(z0=z0, td_s=td, dt_s=dt)
+            if isinstance(c, IbisDriver):
+                edge = c.edge_s
+                break
 
-        # Capacitors (receivers + explicit)
+        for c in p.topology:
+            if not isinstance(c, Tline):
+                continue
+            ref = p.traces[c.ref]
+            z0, dly_m = resolve_trace(ref)
+            td = delay_seconds(c.length_m, dly_m)
+            line = LosslessLine(z0=z0, td_s=td, dt_s=dt)
+            atten = 1.0
+            r_series = 0.0
+            if getattr(ref, "lossy", False):
+                vf = ref.velocity_factor
+                fe = 0.35 / max(edge, 1e-15)
+                alpha = attenuation_neper_per_m(
+                    z0,
+                    vf,
+                    fe,
+                    r_dc=getattr(ref, "r_dc_per_m", 5.0),
+                    r_skin=getattr(ref, "r_skin", 5e-5),
+                    er=ref.er,
+                    tand=getattr(ref, "tand", 0.02),
+                )
+                atten = float(np.exp(-alpha * c.length_m))
+                r_series = max(
+                    getattr(ref, "r_dc_per_m", 5.0) * c.length_m,
+                    2.0 * alpha * z0 * c.length_m,
+                )
+            self._lines[c.id] = _LineState(line=line, atten=atten, r_series=r_series)
+
         self._caps = []
         for c in p.topology:
             if isinstance(c, IbisReceiver):
                 node = self.node_of[f"{c.id}.in"]
-                if node > 0:
-                    self._caps.append(_CapState(node=node, c=c.c_comp_f))
-                    # Die resistance stamped each step
+                cc = c.c_comp_f
+                # Prefer IBIS C_comp if driver-side model somehow shared — receivers stay as-is
+                if node > 0 and cc > 0:
+                    self._caps.append(_CapState(node=node, c=cc))
             elif isinstance(c, Capacitor):
                 node = self.node_of[f"{c.id}.a"]
                 if node > 0:
                     self._caps.append(_CapState(node=node, c=c.farads))
 
-        # Probe voltages
+        # Add C_comp from IBIS drivers at die node
+        for cid, buf in self._ibis_bufs.items():
+            node = self.node_of.get(f"{cid}.die", self.node_of[f"{cid}.out"])
+            cc = buf.model.c_comp_for(buf.corner)
+            if node > 0 and cc > 0:
+                self._caps.append(_CapState(node=node, c=cc))
+
         probe_pins = p.analyze.probes or self._default_probes()
-        records: dict[str, np.ndarray] = {
-            pin: np.zeros(nsteps) for pin in probe_pins if self._node(pin) is not None
+        records = {
+            pin: np.zeros(nsteps)
+            for pin in probe_pins
+            if pin in self.node_of
         }
 
-        v = np.zeros(self.n + 1)  # index 0 unused / gnd
+        v = np.zeros(self.n + 1)
 
         for k in range(nsteps):
             tk = t[k]
-            g = np.zeros((self.n, self.n))
-            i_vec = np.zeros(self.n)
+            # Newton iterations for nonlinear IBIS stamps
+            for _newton in range(6):
+                g = np.zeros((self.n, self.n))
+                i_vec = np.zeros(self.n)
 
-            def add_g(n1: int, n2: int, cond: float) -> None:
-                if n1 > 0:
-                    g[n1 - 1, n1 - 1] += cond
-                if n2 > 0:
-                    g[n2 - 1, n2 - 1] += cond
-                if n1 > 0 and n2 > 0:
-                    g[n1 - 1, n2 - 1] -= cond
-                    g[n2 - 1, n1 - 1] -= cond
+                def add_g(n1: int, n2: int, cond: float) -> None:
+                    if n1 > 0:
+                        g[n1 - 1, n1 - 1] += cond
+                    if n2 > 0:
+                        g[n2 - 1, n2 - 1] += cond
+                    if n1 > 0 and n2 > 0:
+                        g[n1 - 1, n2 - 1] -= cond
+                        g[n2 - 1, n1 - 1] -= cond
 
-            def add_i(node: int, current: float) -> None:
-                if node > 0:
-                    i_vec[node - 1] += current
+                def add_i(node: int, current: float) -> None:
+                    if node > 0:
+                        i_vec[node - 1] += current
 
-            # Resistors
-            for c in p.topology:
-                if isinstance(c, Resistor):
-                    na = self.node_of[f"{c.id}.a"]
-                    nb = self.node_of.get(f"{c.id}.b", 0)
-                    if c.to == "gnd":
-                        nb = 0
-                    add_g(na, nb, 1.0 / c.ohms)
-                elif isinstance(c, IbisReceiver):
-                    na = self.node_of[f"{c.id}.in"]
-                    add_g(na, 0, 1.0 / c.r_die_ohm)
+                for c in p.topology:
+                    if isinstance(c, Resistor):
+                        na = self.node_of[f"{c.id}.a"]
+                        nb = 0 if c.to == "gnd" else self.node_of[f"{c.id}.b"]
+                        add_g(na, nb, 1.0 / c.ohms)
+                    elif isinstance(c, IbisReceiver):
+                        add_g(self.node_of[f"{c.id}.in"], 0, 1.0 / c.r_die_ohm)
 
-            # Drivers — Norton of Vth + Rs
-            for c in p.topology:
-                if isinstance(c, IbisDriver):
+                # Linear PWL drivers (no IBIS table)
+                for c in p.topology:
+                    if not isinstance(c, IbisDriver):
+                        continue
+                    if c.id in self._ibis_bufs and self._ibis_bufs[c.id].uses_iv_table():
+                        continue
                     na = self.node_of[f"{c.id}.out"]
                     rs = max(c.r_series_ohm, 1e-6)
                     vth = _driver_voltage(c, tk)
                     add_g(na, 0, 1.0 / rs)
                     add_i(na, vth / rs)
 
-            # Tlines — MoC Norton companions
-            line_currents: dict[str, tuple[float, float]] = {}
-            for c in p.topology:
-                if not isinstance(c, Tline):
-                    continue
-                line = self._lines[c.id]
-                na = self.node_of[f"{c.id}.a"]
-                nb = self.node_of[f"{c.id}.b"]
-                e_a, e_b = line.companion_sources()
-                z0 = line.z0
-                add_g(na, 0, 1.0 / z0)
-                add_g(nb, 0, 1.0 / z0)
-                add_i(na, e_a / z0)
-                add_i(nb, e_b / z0)
-                line_currents[c.id] = (e_a, e_b)  # temp; update after solve
+                # Nonlinear IBIS drivers on die node + series R to pad
+                for c in p.topology:
+                    if not isinstance(c, IbisDriver):
+                        continue
+                    if c.id not in self._ibis_bufs or not self._ibis_bufs[
+                        c.id
+                    ].uses_iv_table():
+                        continue
+                    buf = self._ibis_bufs[c.id]
+                    ndie = self.node_of[f"{c.id}.die"]
+                    nout = self.node_of[f"{c.id}.out"]
+                    rs = max(c.r_series_ohm, 1.0)
+                    add_g(ndie, nout, 1.0 / rs)
+                    vdie = float(v[ndie])
+                    i0 = buf.current_into_pad(vdie, tk)
+                    eps = 1e-3
+                    i1 = buf.current_into_pad(vdie + eps, tk)
+                    geq = (i1 - i0) / eps
+                    # Floor conductance for Newton stability
+                    geq = float(np.clip(geq, 1e-4, 10.0))
+                    add_g(ndie, 0, geq)
+                    add_i(ndie, i0 - geq * vdie)
+                    # Soft rail clamp via high-G diodes approx
+                    vcc = buf.model.vcc_for(buf.corner)
+                    if vdie > vcc + 0.5:
+                        add_g(ndie, 0, 1.0)
+                        add_i(ndie, -(vcc + 0.5))
+                    if vdie < -0.5:
+                        add_g(ndie, 0, 1.0)
+                        add_i(ndie, 0.5)
 
-            # Capacitors — backward Euler: G=C/dt, Ieq = C/dt * v_prev
-            for cap in self._caps:
-                geq = cap.c / dt
-                add_g(cap.node, 0, geq)
-                add_i(cap.node, geq * cap.v_prev)
+                # Tlines
+                for c in p.topology:
+                    if not isinstance(c, Tline):
+                        continue
+                    st = self._lines[c.id]
+                    na = self.node_of[f"{c.id}.a"]
+                    nb = self.node_of[f"{c.id}.b"]
+                    e_a, e_b = st.line.companion_sources()
+                    z0 = st.line.z0 + 0.5 * st.r_series
+                    add_g(na, 0, 1.0 / z0)
+                    add_g(nb, 0, 1.0 / z0)
+                    add_i(na, e_a / z0)
+                    add_i(nb, e_b / z0)
 
-            # Solve
-            if self.n == 0:
-                break
-            try:
-                vn = np.linalg.solve(g, i_vec)
-            except np.linalg.LinAlgError:
-                vn = np.linalg.lstsq(g, i_vec, rcond=None)[0]
-            v[1:] = vn
+                for cap in self._caps:
+                    geq = cap.c / dt
+                    add_g(cap.node, 0, geq)
+                    add_i(cap.node, geq * cap.v_prev)
 
-            # Update caps
+                if self.n == 0:
+                    break
+                try:
+                    vn = np.linalg.solve(g, i_vec)
+                except np.linalg.LinAlgError:
+                    vn = np.linalg.lstsq(g, i_vec, rcond=None)[0]
+                v[1:] = vn
+
             for cap in self._caps:
                 cap.v_prev = v[cap.node]
 
-            # Commit TL history
             for c in p.topology:
                 if not isinstance(c, Tline):
                     continue
-                line = self._lines[c.id]
+                st = self._lines[c.id]
                 na = self.node_of[f"{c.id}.a"]
                 nb = self.node_of[f"{c.id}.b"]
-                e_a, e_b = line.companion_sources()
-                z0 = line.z0
-                va, vb = v[na], v[nb]
+                e_a, e_b = st.line.companion_sources()
+                z0 = st.line.z0 + 0.5 * st.r_series
+                va, vb = float(v[na]), float(v[nb])
                 ia = (va - e_a) / z0
                 ib = (vb - e_b) / z0
-                line.commit(va, ia, vb, ib)
+                st.line.commit(va, ia, vb, ib)
+                st.line._hist_a[st.line._k] *= st.atten
+                st.line._hist_b[st.line._k] *= st.atten
 
             for pin in records:
-                node = self._node(pin)
-                records[pin][k] = v[node] if node is not None else 0.0
+                records[pin][k] = v[self.node_of[pin]]
 
         waveforms = [Waveform(name=pin, t_s=t, v_v=arr) for pin, arr in records.items()]
         return SimulationResult(
@@ -252,14 +376,10 @@ class TransientSimulator:
                 "dt_s": dt,
                 "tstop_s": tstop,
                 "nodes": self.n,
-                "engine": "moc_lossless_mna",
+                "engine": "moc_mna_ibis",
+                "ibis_drivers": list(self._ibis_bufs.keys()),
             },
         )
-
-    def _node(self, pin: str) -> int | None:
-        if pin in self.node_of:
-            return self.node_of[pin]
-        return None
 
     def _default_probes(self) -> list[str]:
         probes: list[str] = []

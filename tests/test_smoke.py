@@ -1,19 +1,23 @@
-"""Basic closed-form and simulation smoke tests."""
+"""Basic closed-form, IBIS, and simulation smoke tests."""
 
 from pathlib import Path
 
 import numpy as np
 
 from si_prelayout.api import load_project, run_simulation
-from si_prelayout.domain.topology import TraceRef
+from si_prelayout.domain.topology import Corner, TraceRef
 from si_prelayout.field2d.closed_form import microstrip_z0, resolve_trace
+from si_prelayout.field2d.loss_models import djordjevic_sarkar_er, attenuation_neper_per_m
+from si_prelayout.ibis.buffer import extract_switching_tables
+from si_prelayout.ibis.parser import parse_ibis
+from si_prelayout.analyze.sweep import sweep_series_r
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLES = ROOT / "examples"
+IBIS = EXAMPLES / "buffers" / "generic_25ohm.ibs"
 
 
 def test_microstrip_z0_ballpark():
-    # ~50Ω class geometry
     z0 = microstrip_z0(width_m=0.15e-3, height_m=0.1e-3, er=4.2)
     assert 40 < z0 < 70
 
@@ -25,12 +29,32 @@ def test_resolve_explicit_z0():
     assert dly > 0
 
 
+def test_djordjevic_sarkar_causal():
+    er = djordjevic_sarkar_er(1e9, er_inf=4.0, delta_er=0.4)
+    assert np.real(er) > 3.5
+    assert np.imag(er) < 0  # lossy capacitive
+
+
+def test_attenuation_positive():
+    a = attenuation_neper_per_m(50.0, 0.66, 1e9)
+    assert a > 0
+
+
+def test_ibis_parse_and_2eq():
+    model = parse_ibis(IBIS).get("GENERIC_OUTPUT")
+    assert model.pullup is not None and model.pulldown is not None
+    assert len(model.rising) >= 2 and len(model.falling) >= 2
+    tabs = extract_switching_tables(model, Corner.TYP)
+    assert tabs is not None
+    assert tabs.kd_rise[0] > 0.9 and tabs.ku_rise[0] < 0.1
+    assert tabs.ku_rise[-1] > 0.9 and tabs.kd_rise[-1] < 0.1
+
+
 def test_series_terminated_runs():
     project = load_project(EXAMPLES / "series_terminated.si.yml")
     result = run_simulation(project)
     assert result.waveforms
     recv = next(w for w in result.waveforms if w.name.endswith(".in"))
-    # Receiver should see activity above ~1 V after the edge
     assert float(np.max(recv.v_v)) > 1.0
     assert result.checks
 
@@ -39,3 +63,31 @@ def test_parallel_terminated_runs():
     project = load_project(EXAMPLES / "parallel_terminated.si.yml")
     result = run_simulation(project)
     assert len(result.waveforms) >= 1
+
+
+def test_ibis_project_runs():
+    project = load_project(EXAMPLES / "ibis_series_terminated.si.yml")
+    result = run_simulation(project)
+    assert "U1" in result.meta.get("ibis_drivers", [])
+    recv = next(w for w in result.waveforms if w.name.endswith(".in"))
+    assert float(np.max(recv.v_v)) > 1.0
+
+
+def test_crosstalk_heuristic():
+    from si_prelayout.physics.crosstalk import estimate_microstrip_crosstalk
+
+    est = estimate_microstrip_crosstalk(
+        aggressor_edge_v=3.3,
+        length_m=0.05,
+        spacing_m=0.15e-3,
+        height_m=0.1e-3,
+        tr_s=0.2e-9,
+    )
+    assert 0 < est.next_v_ratio < 0.5
+    assert est.fext_v_ratio >= 0
+
+
+def test_sweep_series_r():
+    project = load_project(EXAMPLES / "series_terminated.si.yml")
+    sweep = sweep_series_r(project, [10.0, 33.0, 47.0])
+    assert len(sweep.points) == 3
