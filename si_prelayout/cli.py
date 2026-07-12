@@ -33,6 +33,9 @@ def analyze(
     plot: Optional[Path] = typer.Option(
         None, "--plot", "-p", help="Save waveform PNG to this path"
     ),
+    json_out: Optional[Path] = typer.Option(
+        None, "--json", "-j", help="Write JSON report with timing metrics"
+    ),
 ) -> None:
     """Run a topology simulation and print SI checks."""
     console.print(f"[bold]Analyzing[/bold] {project}")
@@ -57,6 +60,18 @@ def analyze(
     if report:
         write_markdown_report(proj, result, report)
         console.print(f"Report → {report}")
+
+    if json_out:
+        from si_prelayout.domain.topology import IbisDriver
+        from si_prelayout.report.json_report import write_json_report
+
+        vh, vl = 3.3, 0.0
+        for c in proj.topology:
+            if isinstance(c, IbisDriver):
+                vh, vl = c.v_high, c.v_low
+                break
+        write_json_report(proj, result, json_out, v_lo=vl, v_hi=vh)
+        console.print(f"JSON → {json_out}")
 
     if plot:
         fig, ax = plt.subplots(figsize=(9, 4.5))

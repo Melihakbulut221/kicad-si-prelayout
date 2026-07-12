@@ -10,6 +10,7 @@ from si_prelayout.domain.results import SimulationResult
 from si_prelayout.domain.topology import IbisDriver, Project
 from si_prelayout.io.topology_yaml import load_project as _load
 from si_prelayout.io.topology_yaml import save_project
+from si_prelayout.report.json_report import write_json_report
 from si_prelayout.report.markdown import write_markdown_report
 
 
@@ -37,12 +38,21 @@ def run_simulation(project: Project) -> SimulationResult:
 
 
 def analyze_file(
-    path: str | Path, report_path: str | Path | None = None
+    path: str | Path,
+    report_path: str | Path | None = None,
+    json_path: str | Path | None = None,
 ) -> SimulationResult:
     project = load_project(path)
     result = run_simulation(project)
+    v_high, v_low = 3.3, 0.0
+    for c in project.topology:
+        if isinstance(c, IbisDriver):
+            v_high, v_low = c.v_high, c.v_low
+            break
     if report_path is not None:
         write_markdown_report(project, result, report_path)
+    if json_path is not None:
+        write_json_report(project, result, json_path, v_lo=v_low, v_hi=v_high)
     return result
 
 
@@ -52,4 +62,5 @@ __all__ = [
     "run_simulation",
     "analyze_file",
     "write_markdown_report",
+    "write_json_report",
 ]

@@ -87,6 +87,30 @@ def test_crosstalk_heuristic():
     assert est.fext_v_ratio >= 0
 
 
+def test_vector_fit_s21():
+    from si_prelayout.tline.vector_fit import fit_real_poles, tline_s21
+
+    f = np.logspace(7, 10, 40)
+    h = tline_s21(f, length_m=0.05, z0=50.0, vf=0.66)
+    fit = fit_real_poles(f, h, n_poles=8)
+    assert np.all(fit.poles < 0)
+    assert np.isfinite(fit.rmse)
+    # Real-pole-only fit is a skeleton; delay-dominated S21 needs complex poles later.
+    assert fit.rmse < 1.5
+    assert len(fit.h_fit) == len(h)
+
+
+def test_json_report(tmp_path):
+    from si_prelayout.report.json_report import write_json_report
+
+    project = load_project(EXAMPLES / "series_terminated.si.yml")
+    result = run_simulation(project)
+    path = tmp_path / "out.json"
+    write_json_report(project, result, path)
+    assert path.is_file()
+    assert "probes" in path.read_text()
+
+
 def test_sweep_series_r():
     project = load_project(EXAMPLES / "series_terminated.si.yml")
     sweep = sweep_series_r(project, [10.0, 33.0, 47.0])

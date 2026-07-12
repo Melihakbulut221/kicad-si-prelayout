@@ -15,14 +15,17 @@ and SI checks. KiCad integration and PI are later phases.
 | Lossless TL (method of characteristics) | Done |
 | Lossy TL approx (α(f)·ℓ attenuation + Rseries) | Done (MVP) |
 | Djordjevic–Sarkar + skin helpers | Done |
+| f-domain S21 + real-pole fit + recursive conv helper | Done (skeleton) |
 | Behavioral PWL driver | Done |
 | IBIS parser (IV/VT/C_comp/Ramp) | Done |
 | 2-EQ/2-WF Ku/Kd extraction | Done |
 | Nonlinear IBIS buffer in MNA | Done |
 | What-if sweeps (Rseries, length, corners) | Done |
+| Crosstalk spacing heuristic | Done |
+| JSON report + edge timing | Done |
 | Streamlit Studio | Done |
-| Vector fitting macromodels | Roadmap |
-| Coupled / crosstalk | Roadmap |
+| Full Gustavsen VF + passivity | Roadmap |
+| Coupled MoM RLGC | Roadmap |
 | KiCad IPC plugin | Roadmap |
 
 ## IBIS notes
