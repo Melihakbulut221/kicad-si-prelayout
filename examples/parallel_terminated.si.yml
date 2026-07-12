@@ -1,0 +1,59 @@
+name: parallel_terminated
+description: >
+  Source-series + far-end 50Ω to ground. Cleaner edges when matched.
+
+stackup:
+  materials:
+    FR4:
+      name: FR4
+      er: 4.2
+      tand: 0.02
+  layers: []
+
+traces:
+  microstrip_50:
+    name: microstrip_50
+    style: microstrip
+    z0_ohm: 50.0
+    velocity_factor: 0.66
+
+topology:
+  - id: U1
+    type: ibis_driver
+    v_high: 3.3
+    v_low: 0.0
+    r_series_ohm: 5.0
+    edge_s: 1.5e-10
+    delay_s: 1.0e-9
+    pulse_width_s: 5.0e-9
+
+  - id: Rseries
+    type: resistor
+    ohms: 45.0
+    to: floating
+
+  - id: T1
+    type: tline
+    ref: microstrip_50
+    length_m: 0.10
+
+  - id: Rterm
+    type: resistor
+    ohms: 50.0
+    to: gnd
+
+  - id: U2
+    type: ibis_receiver
+    c_comp_f: 2.0e-12
+    r_die_ohm: 1.0e6
+
+nets:
+  - connect: [U1.out, Rseries.a]
+  - connect: [Rseries.b, T1.a]
+  - connect: [T1.b, Rterm.a, U2.in]
+
+analyze:
+  tstop_s: 2.0e-8
+  dt_s: 5.0e-12
+  probes: [U1.out, U2.in]
+  checks: [overshoot, undershoot, monotonicity]

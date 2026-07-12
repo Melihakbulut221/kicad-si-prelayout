@@ -32,3 +32,8 @@ Thumbs.db
 .env
 .env.*
 *.local
+
+# Outputs
+*.png
+reports/
+.streamlit/

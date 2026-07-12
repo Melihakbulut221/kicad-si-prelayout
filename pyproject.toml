@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "si-prelayout"
+version = "0.1.0"
+description = "Open-source pre-layout Signal Integrity simulator (LineSim-style) for KiCad and beyond"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [{ name = "Melihakbulut221" }]
+keywords = ["signal-integrity", "kicad", "ibis", "pre-layout", "pcb", "si"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+]
+dependencies = [
+  "numpy>=1.26",
+  "scipy>=1.11",
+  "pydantic>=2.5",
+  "PyYAML>=6.0",
+  "typer>=0.12",
+  "rich>=13.7",
+  "matplotlib>=3.8",
+]
+
+[project.optional-dependencies]
+ui = ["streamlit>=1.32", "plotly>=5.18"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+si-prelayout = "si_prelayout.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/Melihakbulut221/kicad-si-prelayout"
+Repository = "https://github.com/Melihakbulut221/kicad-si-prelayout"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["si_prelayout*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

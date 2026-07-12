@@ -1,0 +1,60 @@
+name: series_terminated_stub
+description: >
+  Classic reflection demo — driver with series R into a 50Ω microstrip,
+  far-end open-ish receiver (high-Z + Ccomp). Tweak Rs and length in the UI.
+
+stackup:
+  materials:
+    FR4:
+      name: FR4
+      er: 4.2
+      tand: 0.02
+  layers:
+    - { name: L1, kind: signal, thickness_m: 3.5e-5, copper_weight_oz: 1.0 }
+    - { name: D1, kind: dielectric, thickness_m: 1.0e-4, material: FR4 }
+    - { name: GND, kind: plane, thickness_m: 3.5e-5, copper_weight_oz: 1.0 }
+
+traces:
+  microstrip_50:
+    name: microstrip_50
+    style: microstrip
+    z0_ohm: 50.0
+    velocity_factor: 0.66
+
+topology:
+  - id: U1
+    type: ibis_driver
+    model: GENERIC_OUTPUT
+    v_high: 3.3
+    v_low: 0.0
+    r_series_ohm: 10.0
+    edge_s: 2.0e-10
+    delay_s: 1.0e-9
+    pulse_width_s: 6.0e-9
+
+  - id: Rseries
+    type: resistor
+    ohms: 33.0
+    to: floating
+
+  - id: T1
+    type: tline
+    ref: microstrip_50
+    length_m: 0.08
+
+  - id: U2
+    type: ibis_receiver
+    model: GENERIC_INPUT
+    c_comp_f: 3.0e-12
+    r_die_ohm: 1.0e6
+
+nets:
+  - connect: [U1.out, Rseries.a]
+  - connect: [Rseries.b, T1.a]
+  - connect: [T1.b, U2.in]
+
+analyze:
+  tstop_s: 2.0e-8
+  dt_s: 5.0e-12
+  probes: [U1.out, U2.in]
+  checks: [overshoot, undershoot, monotonicity]
