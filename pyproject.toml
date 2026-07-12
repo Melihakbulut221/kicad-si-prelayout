@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "si-prelayout"
-version = "0.2.1"
+version = "0.3.0"
 description = "Open-source pre-layout Signal Integrity simulator (LineSim-style) for KiCad and beyond"
 readme = "README.md"
 license = { text = "MIT" }
@@ -31,6 +31,7 @@ dependencies = [
 [project.optional-dependencies]
 ui = ["streamlit>=1.32", "plotly>=5.18"]
 dev = ["pytest>=8.0"]
+native = ["maturin>=1.4", "pybind11>=2.12"]
 
 [project.scripts]
 si-prelayout = "si_prelayout.cli:app"

@@ -3,4 +3,4 @@
 from si_prelayout.api import load_project, run_simulation
 
 __all__ = ["load_project", "run_simulation"]
-__version__ = "0.2.1"
+__version__ = "0.3.0"

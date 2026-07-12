@@ -18,9 +18,28 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install
         run: pip install -e ".[dev]"
-      - name: Test
+      - name: Test (Python fallback)
         run: pytest -q
       - name: CLI smoke
         run: |
           si-prelayout validate examples/series_terminated.si.yml
           si-prelayout analyze examples/ibis_series_terminated.si.yml -j /tmp/out.json
+          si-prelayout backend
+
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install + build natives
+        run: |
+          pip install -e ".[dev,native]"
+          bash scripts/build_native.sh
+      - name: Test with native
+        run: |
+          si-prelayout backend
+          pytest -q
+          si-prelayout analyze examples/series_terminated.si.yml

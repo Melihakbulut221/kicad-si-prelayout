@@ -154,6 +154,40 @@ def sweep(
         raise typer.Exit(1)
 
 
+@app.command("zdiff")
+def zdiff_cmd(
+    width_mil: float = typer.Option(..., help="Trace width (mil)"),
+    height_mil: float = typer.Option(..., help="Dielectric height (mil)"),
+    gap_mil: float = typer.Option(..., help="Edge-to-edge gap (mil)"),
+    er: float = typer.Option(4.2, help="Relative permittivity"),
+) -> None:
+    """Coupled microstrip odd/even / Zdiff preview."""
+    from si_prelayout.physics.diffpair import microstrip_zdiff
+
+    mil = 25.4e-6
+    zodd, zeven, zdiff = microstrip_zdiff(
+        width_mil * mil, height_mil * mil, gap_mil * mil, er
+    )
+    console.print(f"Zodd  ≈ [bold]{zodd:.2f} Ω[/bold]")
+    console.print(f"Zeven ≈ [bold]{zeven:.2f} Ω[/bold]")
+    console.print(f"Zdiff ≈ [bold]{zdiff:.2f} Ω[/bold]  (≈ 2·Zodd)")
+
+
+@app.command("budget")
+def length_budget_cmd(
+    skew_ps: float = typer.Option(..., help="Allowed skew (ps)"),
+    vf: float = typer.Option(0.66, help="Velocity factor"),
+) -> None:
+    """Max length mismatch for a skew budget."""
+    from si_prelayout.physics.diffpair import length_budget_m
+
+    lm = length_budget_m(skew_ps, vf)
+    console.print(
+        f"ΔL_max ≈ [bold]{lm*1e3:.3f} mm[/bold] "
+        f"({lm/25.4e-6:.1f} mil) for {skew_ps:g} ps @ vf={vf}"
+    )
+
+
 @app.command("xtalk")
 def crosstalk(
     spacing_mil: float = typer.Option(..., help="Edge-to-edge spacing (mil)"),
@@ -178,6 +212,23 @@ def crosstalk(
     console.print(f"FEXT ≈ [bold]{est.fext_mv_per_v:.1f} mV/V[/bold] "
                   f"→ {est.fext_v_ratio * swing_v:.3f} V peak")
     console.print(f"[dim]{est.notes}[/dim]")
+
+
+@app.command()
+def backend() -> None:
+    """Show which solver backend is active (rust / cpp / python)."""
+    from si_prelayout.native import info, reload_backend
+
+    name = reload_backend()
+    meta = info()
+    console.print(f"Solver backend: [bold]{name}[/bold]")
+    if meta.module:
+        console.print(f"Module: {meta.module}  version={meta.version}")
+    else:
+        console.print(
+            "[dim]Pure Python fallback. Build natives with:[/dim]\n"
+            "  bash scripts/build_native.sh"
+        )
 
 
 @app.command()

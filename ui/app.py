@@ -25,6 +25,10 @@ st.caption(
     "Open-source LineSim-style pre-layout SI — edit topology knobs, "
     "simulate reflections, review checks."
 )
+from si_prelayout.native import info as _backend_info
+
+_bi = _backend_info()
+st.caption(f"Solver backend: **{_bi.name}**" + (f" ({_bi.version})" if _bi.version else ""))
 
 example_files = sorted(EXAMPLES.glob("*.si.yml")) if EXAMPLES.exists() else []
 example_names = [p.name for p in example_files]
@@ -132,6 +136,23 @@ with col_checks:
         icon = "✅" if c.passed else "❌"
         st.markdown(f"{icon} **{c.name}**")
         st.caption(c.message)
+    st.divider()
+    st.subheader("Timing")
+    from si_prelayout.report.json_report import edge_timing
+    from si_prelayout.domain.topology import IbisDriver as _Drv
+
+    vh, vl = 3.3, 0.0
+    for c in project.topology:
+        if isinstance(c, _Drv):
+            vh, vl = c.v_high, c.v_low
+            break
+    for wf in result.waveforms:
+        tim = edge_timing(wf, vl, vh)
+        rise = tim["rise_20_80_s"]
+        rise_s = f"{rise*1e12:.0f} ps" if rise is not None else "—"
+        st.caption(
+            f"`{wf.name}`  max {tim['v_max']:.2f} V · 20–80 rise {rise_s}"
+        )
     st.divider()
     st.markdown(f"**Project:** {project.name}")
     st.caption(project.description or "—")

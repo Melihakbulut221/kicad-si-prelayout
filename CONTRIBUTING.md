@@ -18,14 +18,20 @@ pytest -q
 - Prefer golden / heuristic tests over silent numerical changes.
 - Synthetic IBIS: regenerate with `python scripts/generate_generic_ibis.py`.
 
-## Useful commands
+## Native solvers (Rust / C++)
 
 ```bash
-si-prelayout analyze examples/ibis_series_terminated.si.yml
-si-prelayout sweep examples/series_terminated.si.yml --series-r 10,33,47
-si-prelayout xtalk --spacing-mil 6 --height-mil 4 --length-mil 2000
-si-prelayout ui
+# Requires: rustup toolchain + g++ + Python venv
+pip install -e ".[native]"
+bash scripts/build_native.sh
+si-prelayout backend   # expect: rust (preferred) or cpp
 ```
+
+- Rust crate: `native/rust` → module `si_core_rust`
+- C++ module: `native/cpp` → module `si_core_cpp`
+- Python selects backend in `si_prelayout/native/__init__.py`
+
+Hot path today: dense `G·v=i` and MoC lossless/attenuated lines.
 
 ## Roadmap pointers
 

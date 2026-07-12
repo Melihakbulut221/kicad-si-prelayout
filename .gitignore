@@ -37,3 +37,12 @@ Thumbs.db
 *.png
 reports/
 .streamlit/
+*.so
+*.pyd
+target/
+native/rust/target/
+native/cpp/build/
+si_core_cpp*.so
+si_core_rust*.so
+Cargo.lock
+

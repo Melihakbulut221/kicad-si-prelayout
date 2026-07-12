@@ -20,7 +20,8 @@ from si_prelayout.field2d.closed_form import resolve_trace
 from si_prelayout.field2d.loss_models import attenuation_neper_per_m
 from si_prelayout.ibis.buffer import IbisBufferState, build_buffer
 from si_prelayout.ibis.parser import parse_ibis
-from si_prelayout.tline.lossless import LosslessLine, delay_seconds
+from si_prelayout.native import backend_name, make_lossless_line, solve_dense
+from si_prelayout.tline.lossless import delay_seconds
 
 
 @dataclass
@@ -32,7 +33,7 @@ class _CapState:
 
 @dataclass
 class _LineState:
-    line: LosslessLine
+    line: object
     atten: float  # e^(-αℓ) applied to traveling waves
     r_series: float  # total series loss resistance
 
@@ -199,7 +200,6 @@ class TransientSimulator:
             ref = p.traces[c.ref]
             z0, dly_m = resolve_trace(ref)
             td = delay_seconds(c.length_m, dly_m)
-            line = LosslessLine(z0=z0, td_s=td, dt_s=dt)
             atten = 1.0
             r_series = 0.0
             if getattr(ref, "lossy", False):
@@ -219,6 +219,7 @@ class TransientSimulator:
                     getattr(ref, "r_dc_per_m", 5.0) * c.length_m,
                     2.0 * alpha * z0 * c.length_m,
                 )
+            line = make_lossless_line(z0, td, dt, atten=atten)
             self._lines[c.id] = _LineState(line=line, atten=atten, r_series=r_series)
 
         self._caps = []
@@ -343,8 +344,8 @@ class TransientSimulator:
                 if self.n == 0:
                     break
                 try:
-                    vn = np.linalg.solve(g, i_vec)
-                except np.linalg.LinAlgError:
+                    vn = solve_dense(g, i_vec)
+                except Exception:
                     vn = np.linalg.lstsq(g, i_vec, rcond=None)[0]
                 v[1:] = vn
 
@@ -363,8 +364,6 @@ class TransientSimulator:
                 ia = (va - e_a) / z0
                 ib = (vb - e_b) / z0
                 st.line.commit(va, ia, vb, ib)
-                st.line._hist_a[st.line._k] *= st.atten
-                st.line._hist_b[st.line._k] *= st.atten
 
             for pin in records:
                 records[pin][k] = v[self.node_of[pin]]
@@ -377,6 +376,7 @@ class TransientSimulator:
                 "tstop_s": tstop,
                 "nodes": self.n,
                 "engine": "moc_mna_ibis",
+                "solver_backend": backend_name(),
                 "ibis_drivers": list(self._ibis_bufs.keys()),
             },
         )

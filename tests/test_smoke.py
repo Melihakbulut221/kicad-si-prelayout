@@ -100,6 +100,15 @@ def test_vector_fit_s21():
     assert len(fit.h_fit) == len(h)
 
 
+def test_diffpair_and_budget():
+    from si_prelayout.physics.diffpair import length_budget_m, microstrip_zdiff
+
+    zodd, zeven, zdiff = microstrip_zdiff(0.1e-3, 0.1e-3, 0.1e-3, 4.2)
+    assert zdiff > zodd > 0
+    assert zeven > zodd
+    assert length_budget_m(10.0) > 0
+
+
 def test_json_report(tmp_path):
     from si_prelayout.report.json_report import write_json_report
 
